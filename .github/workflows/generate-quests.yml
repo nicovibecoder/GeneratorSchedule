@@ -1,0 +1,33 @@
+name: Generate Daily Quests
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 22:00 UTC = 05:00 AM Vietnam time
+  workflow_dispatch:        # Allow manual trigger from Actions tab
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Generate daily quests
+        env:
+          GEMINI_API_KEY:          ${{ secrets.GEMINI_API_KEY }}
+          FIREBASE_PROJECT_ID:     ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_CLIENT_EMAIL:   ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY:    ${{ secrets.FIREBASE_PRIVATE_KEY }}
+          REGIONS:                 ${{ secrets.REGIONS }}
+          QUEST_PROMPT_TEMPLATE:   ${{ secrets.QUEST_PROMPT_TEMPLATE }}
+          GEMINI_MODEL:            ${{ secrets.GEMINI_MODEL }}
+          QUESTS_PER_REGION:       ${{ secrets.QUESTS_PER_REGION }}
+        run: node generator/generate-daily-quests.mjs

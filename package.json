@@ -1,0 +1,13 @@
+{
+    "name": "snapquest-quest-generator",
+    "version": "1.0.0",
+    "type": "module",
+    "description": "Scheduled daily quest generator for SnapQuest app",
+    "scripts": {
+        "generate": "node generator/generate-daily-quests.mjs"
+    },
+    "dependencies": {
+        "@google/generative-ai": "^0.12.0",
+        "firebase-admin": "^13.0.0"
+    }
+}
