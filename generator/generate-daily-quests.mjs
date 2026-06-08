@@ -39,7 +39,42 @@ async function callOpenRouter(prompt) {
         body: JSON.stringify({
             model: GEMINI_MODEL,
             messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' },
+            max_tokens: 4096,
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: 'quests',
+                    strict: true,
+                    schema: {
+                        type: 'object',
+                        properties: {
+                            quests: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        title:           { type: 'string' },
+                                        description:     { type: 'string' },
+                                        hint:            { type: 'string' },
+                                        category:        { type: 'string' },
+                                        difficulty:      { type: 'string', enum: ['common','uncommon','rare','epic','legendary'] },
+                                        targetLabels:    { type: 'array', items: { type: 'string' } },
+                                        rarityMultiplier:{ type: 'number' },
+                                        isSeasonalEvent: { type: 'boolean' },
+                                        eventName:       { type: ['string', 'null'] },
+                                        eventBadge:      { type: ['string', 'null'] },
+                                        eventMultiplier: { type: ['number', 'null'] },
+                                    },
+                                    required: ['title','description','hint','category','difficulty','targetLabels','rarityMultiplier','isSeasonalEvent'],
+                                    additionalProperties: false,
+                                },
+                            },
+                        },
+                        required: ['quests'],
+                        additionalProperties: false,
+                    },
+                },
+            },
         }),
     });
     if (!res.ok) {
@@ -109,9 +144,18 @@ async function gen(region, dateStr, expiresAt) {
 
     let arr;
     try {
-        arr = JSON.parse(text);
+        const parsed = JSON.parse(text);
+        // Schema enforces { quests: [...] } — extract the array
+        if (Array.isArray(parsed)) {
+            arr = parsed;
+        } else if (Array.isArray(parsed?.quests)) {
+            arr = parsed.quests;
+        } else {
+            const found = Object.values(parsed ?? {}).find(v => Array.isArray(v));
+            arr = found ?? [parsed];
+        }
     } catch {
-        // Try to extract JSON array from response if wrapped in markdown or extra text
+        // Fallback: extract JSON array from markdown-wrapped response
         const m = text.match(/\[[\s\S]*\]/);
         if (!m) throw new Error(`parse failed, response: ${text.slice(0, 200)}`);
         arr = JSON.parse(m[0]);
