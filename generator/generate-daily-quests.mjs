@@ -9,7 +9,7 @@ if (missing.length) { process.stderr.write(`missing env: ${missing.join(',')}\n`
 const {
     GEMINI_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY, REGIONS, QUEST_PROMPT_TEMPLATE,
-    GEMINI_MODEL = 'gemini-2.5-flash',
+    GEMINI_MODEL = 'gemini-embedding-2',
     QUESTS_PER_REGION = '5',
 } = process.env;
 
