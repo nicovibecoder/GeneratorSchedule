@@ -28,7 +28,7 @@ initializeApp({
 });
 const db = getFirestore();
 
-// Call OpenRouter with Gemini model (OpenAI-compatible API, no extra SDK needed)
+// Call OpenRouter — single request for ALL regions at once
 async function callOpenRouter(prompt) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -39,38 +39,41 @@ async function callOpenRouter(prompt) {
         body: JSON.stringify({
             model: GEMINI_MODEL,
             messages: [{ role: 'user', content: prompt }],
-            max_tokens: 4096,
+            max_tokens: 16000, // 16 regions × 5 quests needs more room
             response_format: {
                 type: 'json_schema',
                 json_schema: {
-                    name: 'quests',
+                    name: 'all_quests',
                     strict: true,
                     schema: {
                         type: 'object',
                         properties: {
-                            quests: {
-                                type: 'array',
-                                items: {
-                                    type: 'object',
-                                    properties: {
-                                        title:           { type: 'string' },
-                                        description:     { type: 'string' },
-                                        hint:            { type: 'string' },
-                                        category:        { type: 'string' },
-                                        difficulty:      { type: 'string', enum: ['common','uncommon','rare','epic','legendary'] },
-                                        targetLabels:    { type: 'array', items: { type: 'string' } },
-                                        rarityMultiplier:{ type: 'number' },
-                                        isSeasonalEvent: { type: 'boolean' },
-                                        eventName:       { type: ['string', 'null'] },
-                                        eventBadge:      { type: ['string', 'null'] },
-                                        eventMultiplier: { type: ['number', 'null'] },
+                            regions: {
+                                type: 'object',
+                                additionalProperties: {
+                                    type: 'array',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            title:            { type: 'string' },
+                                            description:      { type: 'string' },
+                                            hint:             { type: 'string' },
+                                            category:         { type: 'string' },
+                                            difficulty:       { type: 'string', enum: ['common','uncommon','rare','epic','legendary'] },
+                                            targetLabels:     { type: 'array', items: { type: 'string' } },
+                                            rarityMultiplier: { type: 'number' },
+                                            isSeasonalEvent:  { type: 'boolean' },
+                                            eventName:        { type: ['string', 'null'] },
+                                            eventBadge:       { type: ['string', 'null'] },
+                                            eventMultiplier:  { type: ['number', 'null'] },
+                                        },
+                                        required: ['title','description','hint','category','difficulty','targetLabels','rarityMultiplier','isSeasonalEvent'],
+                                        additionalProperties: false,
                                     },
-                                    required: ['title','description','hint','category','difficulty','targetLabels','rarityMultiplier','isSeasonalEvent'],
-                                    additionalProperties: false,
                                 },
                             },
                         },
-                        required: ['quests'],
+                        required: ['regions'],
                         additionalProperties: false,
                     },
                 },
@@ -89,7 +92,7 @@ async function callOpenRouter(prompt) {
     }
     const content = data.choices[0].message.content;
     const actualModel = data.model ?? GEMINI_MODEL;
-    process.stdout.write(`  [debug] model: ${actualModel}, response length: ${content.length}, preview: ${content.slice(0, 100)}\n`);
+    process.stdout.write(`  [debug] model: ${actualModel}, response length: ${content.length}\n`);
     return { content, actualModel };
 }
 
@@ -105,9 +108,13 @@ const MAX_RETRY_WAIT_MS = 90000; // cap retry wait at 90s
  * Returns milliseconds, default 60000 if not found.
  */
 function parseRetryDelay(errMsg) {
-    const m = errMsg.match(/"retryDelay"\s*:\s*"([\d.]+)s"/);
-    if (m) return Math.ceil(parseFloat(m[1]) * 1000) + 2000; // +2s buffer
-    return 60000;
+    // OpenRouter 429 includes retry_after_seconds in metadata
+    const orMatch = errMsg.match(/"retry_after_seconds"\s*:\s*([\d.]+)/);
+    if (orMatch) return Math.ceil(parseFloat(orMatch[1]) * 1000) + 2000;
+    // Gemini-style retryDelay
+    const geminiMatch = errMsg.match(/"retryDelay"\s*:\s*"([\d.]+)s"/);
+    if (geminiMatch) return Math.ceil(parseFloat(geminiMatch[1]) * 1000) + 2000;
+    return 30000; // default 30s
 }
 
 /**
@@ -134,57 +141,63 @@ async function genWithRetry(prompt) {
     }
 }
 
-async function gen(region, dateStr, expiresAt) {
+async function genAll(dateStr, expiresAt) {
+    // Build single prompt listing all regions
+    const regionList = REGIONS_LIST.map(r => `- ${r}`).join('\n');
     const prompt = QUEST_PROMPT_TEMPLATE
-        .replace(/\{\{region\}\}/g, region)
+        .replace(/\{\{regions\}\}/g, regionList)
         .replace(/\{\{date\}\}/g, dateStr)
         .replace(/\{\{count\}\}/g, String(COUNT));
 
     const { content: text, actualModel } = await genWithRetry(prompt);
-
-    let arr;
+    let regionMap;
     try {
         const parsed = JSON.parse(text);
-        // Schema enforces { quests: [...] } — extract the array
-        if (Array.isArray(parsed)) {
-            arr = parsed;
-        } else if (Array.isArray(parsed?.quests)) {
-            arr = parsed.quests;
-        } else {
-            const found = Object.values(parsed ?? {}).find(v => Array.isArray(v));
-            arr = found ?? [parsed];
-        }
+        regionMap = parsed?.regions ?? parsed;
     } catch {
-        // Fallback: extract JSON array from markdown-wrapped response
-        const m = text.match(/\[[\s\S]*\]/);
-        if (!m) throw new Error(`parse failed, response: ${text.slice(0, 200)}`);
-        arr = JSON.parse(m[0]);
+        throw new Error(`parse failed, response: ${text.slice(0, 300)}`);
     }
 
-    if (!Array.isArray(arr) || !arr.length) {
-        throw new Error(`empty or non-array response: ${text.slice(0, 200)}`);
+    if (!regionMap || typeof regionMap !== 'object') {
+        throw new Error(`unexpected structure: ${text.slice(0, 200)}`);
     }
 
-    return arr.slice(0, COUNT + 2).map((q, i) => ({
-        id: `quest_${dateStr}_${region.replace(/\s+/g, '_')}_${i}`,
-        title: String(q.title ?? ''),
-        description: String(q.description ?? ''),
-        hint: String(q.hint ?? q.description ?? ''),
-        category: String(q.category ?? 'object'),
-        difficulty: String(q.difficulty ?? 'common'),
-        // Fix: store as actual array, not JSON string
-        targetLabels: Array.isArray(q.targetLabels) ? q.targetLabels.map(String) : [],
-        basePoints: BASE_POINTS[q.difficulty] ?? 100,
-        rarityMultiplier: Number(q.rarityMultiplier ?? 1),
-        region,
-        expiresAt: Timestamp.fromDate(expiresAt),
-        createdAt: Timestamp.now(),
-        generatedBy: actualModel,
-        isSeasonalEvent: Boolean(q.isSeasonalEvent),
-        eventName: q.eventName ?? null,
-        eventBadge: q.eventBadge ?? null,
-        eventMultiplier: q.eventMultiplier ?? null,
-    }));
+    const allQuests = [];
+    for (const region of REGIONS_LIST) {
+        // Try exact match first, then case-insensitive
+        const arr = regionMap[region]
+            ?? Object.entries(regionMap).find(([k]) => k.toLowerCase() === region.toLowerCase())?.[1]
+            ?? [];
+
+        if (!Array.isArray(arr) || !arr.length) {
+            process.stderr.write(`  [warn] no quests returned for region: ${region}\n`);
+            continue;
+        }
+
+        const quests = arr.slice(0, COUNT + 2).map((q, i) => ({
+            id: `quest_${dateStr}_${region.replace(/\s+/g, '_')}_${i}`,
+            title: String(q.title ?? ''),
+            description: String(q.description ?? ''),
+            hint: String(q.hint ?? q.description ?? ''),
+            category: String(q.category ?? 'object'),
+            difficulty: String(q.difficulty ?? 'common'),
+            targetLabels: Array.isArray(q.targetLabels) ? q.targetLabels.map(String) : [],
+            basePoints: BASE_POINTS[q.difficulty] ?? 100,
+            rarityMultiplier: Number(q.rarityMultiplier ?? 1),
+            region,
+            expiresAt: Timestamp.fromDate(expiresAt),
+            createdAt: Timestamp.now(),
+            generatedBy: actualModel,
+            isSeasonalEvent: Boolean(q.isSeasonalEvent),
+            eventName: q.eventName ?? null,
+            eventBadge: q.eventBadge ?? null,
+            eventMultiplier: q.eventMultiplier ?? null,
+        }));
+        allQuests.push(...quests);
+        process.stdout.write(`  ok: ${quests.length} quests for ${region}\n`);
+    }
+
+    return allQuests;
 }
 
 async function cleanup() {
@@ -204,30 +217,23 @@ async function main() {
 
     await cleanup();
 
-    // Run all regions in parallel — OpenRouter handles concurrency fine
-    const results = await Promise.allSettled(
-        REGIONS_LIST.map(async region => {
-            process.stdout.write(`generating: ${region}...\n`);
-            const quests = await gen(region, dateStr, tomorrow);
-            const batch = db.batch();
-            quests.forEach(q => batch.set(db.collection('quests').doc(q.id), q));
-            await batch.commit();
-            process.stdout.write(`  ok: ${quests.length} quests for ${region}\n`);
-        })
-    );
+    process.stdout.write(`generating all ${REGIONS_LIST.length} regions in 1 request...\n`);
+    const allQuests = await genAll(dateStr, tomorrow);
 
-    const errors = results
-        .map((r, i) => r.status === 'rejected' ? { region: REGIONS_LIST[i], reason: r.reason?.message } : null)
-        .filter(Boolean);
-
-    errors.forEach(e => process.stderr.write(`[FAIL] ${e.region}: ${e.reason}\n`));
-
-    if (errors.length) {
-        process.stderr.write(`failed regions (${errors.length}/${REGIONS_LIST.length}): ${errors.map(e => e.region).join(', ')}\n`);
+    if (!allQuests.length) {
+        process.stderr.write('fatal: no quests generated\n');
         process.exit(1);
     }
 
-    process.stdout.write(`done: all ${REGIONS_LIST.length} regions generated\n`);
+    // Write to Firestore in batches of 500 (Firestore limit)
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < allQuests.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        allQuests.slice(i, i + BATCH_SIZE).forEach(q => batch.set(db.collection('quests').doc(q.id), q));
+        await batch.commit();
+    }
+
+    process.stdout.write(`done: ${allQuests.length} quests written across ${REGIONS_LIST.length} regions\n`);
 }
 
 main().catch(e => {
