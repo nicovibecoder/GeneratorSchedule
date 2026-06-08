@@ -1,14 +1,14 @@
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
-const required = ['GEMINI_API_KEY','FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','REGIONS','QUEST_PROMPT_TEMPLATE','GEMINI_MODEL'];
+const required = ['GEMINI_API_KEY','FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','REGIONS','QUEST_PROMPT_TEMPLATE','GEMINI_MODELS'];
 const missing = required.filter(v => !process.env[v]);
 if (missing.length) { process.stderr.write(`missing env: ${missing.join(',')}\n`); process.exit(1); }
 
 const {
     GEMINI_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY, REGIONS, QUEST_PROMPT_TEMPLATE,
-    GEMINI_MODEL,
+    GEMINI_MODELS,
     QUESTS_PER_REGION = '5',
 } = process.env;
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
@@ -28,8 +28,17 @@ initializeApp({
 });
 const db = getFirestore();
 
+// Fallback model chain — tried in order if primary model is rate-limited
+const MODEL_FALLBACKS = [
+    GEMINI_MODEL,
+    'google/gemini-2.0-flash-lite:free',
+    'google/gemma-3-27b-it:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'qwen/qwen-2.5-72b-instruct:free',
+].filter((m, i, arr) => m && arr.indexOf(m) === i); // dedupe, remove empty
+
 // Call OpenRouter — single request for ALL regions at once
-async function callOpenRouter(prompt) {
+async function callOpenRouter(prompt, model = MODEL_FALLBACKS[0]) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -37,7 +46,7 @@ async function callOpenRouter(prompt) {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            model: GEMINI_MODEL,
+            model: model,
             messages: [{ role: 'user', content: prompt }],
             max_tokens: 16000, // 16 regions × 5 quests needs more room
             response_format: {
@@ -99,7 +108,7 @@ async function callOpenRouter(prompt) {
         throw new Error(`unexpected response: ${JSON.stringify(data).slice(0, 300)}`);
     }
     const content = data.choices[0].message.content;
-    const actualModel = data.model ?? GEMINI_MODEL;
+    const actualModel = data.model ?? model;
     process.stdout.write(`  [debug] model: ${actualModel}, response length: ${content.length}\n`);
     return { content, actualModel };
 }
@@ -131,22 +140,33 @@ function parseRetryDelay(errMsg) {
  */
 const MAX_RETRIES = 5;
 async function genWithRetry(prompt) {
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            const result = await callOpenRouter(prompt);
-            return result;
-        } catch (e) {
-            const is429 = e.message?.includes('429') || e.status === 429;
-            const is502 = e.message?.includes('502') || e.status === 502;
-            if ((!is429 && !is502) || attempt === MAX_RETRIES) throw e;
+    for (let modelIdx = 0; modelIdx < MODEL_FALLBACKS.length; modelIdx++) {
+        const model = MODEL_FALLBACKS[modelIdx];
+        process.stdout.write(`  [model] trying: ${model}\n`);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const result = await callOpenRouter(prompt, model);
+                return result;
+            } catch (e) {
+                const is429 = e.message?.includes('429') || e.status === 429;
+                const is502 = e.message?.includes('502') || e.status === 502;
+                if (!is429 && !is502) throw e; // non-retryable error
 
-            const delayMs = is429
-                ? Math.min(parseRetryDelay(e.message ?? ''), MAX_RETRY_WAIT_MS)
-                : 5000 * attempt; // 502: 5s, 10s, 15s...
-            process.stdout.write(`  [rate-limit] attempt ${attempt}/${MAX_RETRIES}, waiting ${(delayMs/1000).toFixed(1)}s...\n`);
-            await sleep(delayMs);
+                if (is429 && attempt === MAX_RETRIES) {
+                    // Exhausted retries for this model → try next fallback
+                    process.stdout.write(`  [fallback] ${model} exhausted, trying next model...\n`);
+                    break;
+                }
+
+                const delayMs = is429
+                    ? Math.min(parseRetryDelay(e.message ?? ''), MAX_RETRY_WAIT_MS)
+                    : 5000 * attempt;
+                process.stdout.write(`  [rate-limit] attempt ${attempt}/${MAX_RETRIES}, waiting ${(delayMs/1000).toFixed(1)}s...\n`);
+                await sleep(delayMs);
+            }
         }
     }
+    throw new Error('all models exhausted');
 }
 
 async function genAll(dateStr, expiresAt) {
