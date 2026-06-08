@@ -11,7 +11,7 @@ const {
     GEMINI_MODEL = 'google/gemini-2.0-flash-lite:free',
     QUESTS_PER_REGION = '5',
 } = process.env;
-const RPM_LIMIT = 60; // OpenRouter is much more generous than Gemini free tier
+const RPM_LIMIT = 200; // OpenRouter is much more generous than Gemini free tier
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
