@@ -62,7 +62,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // 1 request per region → 60000ms / 60 RPM = 1000ms minimum between requests
 // Add buffer to stay safely under limit
                                    // requests per minute (free tier)
-const DELAY_BETWEEN_REGIONS_MS = Math.ceil(60000 / RPM_LIMIT) + 2000; // ~6000ms per region
+const DELAY_BETWEEN_REGIONS_MS = Math.ceil(60000 / RPM_LIMIT) + 500; // ~800ms per region
 const MAX_RETRY_WAIT_MS = 90000;                             // cap retry wait at 90s
 // --------------------------------------------------------------
 
