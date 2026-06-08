@@ -87,7 +87,8 @@ async function callOpenRouter(prompt, model = MODEL_FALLBACKS[0]) {
     if (!res.ok) {
         const body = await res.text();
         const err = new Error(`[${res.status}] ${body}`);
-        err.status = res.status;
+        err.status = res.status;  // set status explicitly
+        err.httpStatus = res.status; // backup property
         throw err;
     }
     const rawText = await res.text();
@@ -143,10 +144,12 @@ async function genWithRetry(prompt) {
                 const result = await callOpenRouter(prompt, model);
                 return result;
             } catch (e) {
-                const is429 = e.status === 429 || /\[429\]/.test(e.message);
-                const is502 = e.status === 502 || /\[502\]/.test(e.message);
-                const is400 = e.status === 400 || /\[400\]/.test(e.message);
-                const is404 = e.status === 404 || /\[404\]/.test(e.message);
+                const httpStatus = e.httpStatus ?? e.status ?? 0;
+                const is429 = httpStatus === 429 || /\[429\]/.test(e.message);
+                const is502 = httpStatus === 502 || /\[502\]/.test(e.message);
+                const is400 = httpStatus === 400 || /\[400\]/.test(e.message);
+                const is404 = httpStatus === 404 || /\[404\]/.test(e.message);
+                process.stdout.write(`  [debug] httpStatus=${httpStatus} is429=${is429} is404=${is404} is400=${is400}\n`);
                 if (!is429 && !is502 && !is400 && !is404) throw e; // non-retryable error
 
                 if (is400 || is404 || (is429 && attempt === MAX_RETRIES)) {
