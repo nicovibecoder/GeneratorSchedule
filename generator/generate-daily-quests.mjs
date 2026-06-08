@@ -11,7 +11,7 @@ const {
     GEMINI_MODEL,
     QUESTS_PER_REGION = '5',
 } = process.env;
-const RPM_LIMIT = 200; // OpenRouter is much more generous than Gemini free tier
+const RPM_LIMIT = 200; // OpenRouter concurrent request limit reference
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
@@ -60,12 +60,8 @@ async function callOpenRouter(prompt) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// --- Rate limit constants (OpenRouter free tier: ~60 RPM) ---
-// 1 request per region → 60000ms / 60 RPM = 1000ms minimum between requests
-// Add buffer to stay safely under limit
-                                   // requests per minute (free tier)
-const DELAY_BETWEEN_REGIONS_MS = Math.ceil(60000 / RPM_LIMIT) + 500; // ~800ms per region
-const MAX_RETRY_WAIT_MS = 90000;                             // cap retry wait at 90s
+// --- Rate limit constants (kept for reference, parallel mode handles concurrency via retry) ---
+const MAX_RETRY_WAIT_MS = 90000; // cap retry wait at 90s
 // --------------------------------------------------------------
 
 /**
@@ -164,27 +160,26 @@ async function main() {
 
     await cleanup();
 
-    const errors = [];
-    for (const region of REGIONS_LIST) {
-        try {
+    // Run all regions in parallel — OpenRouter handles concurrency fine
+    const results = await Promise.allSettled(
+        REGIONS_LIST.map(async region => {
             process.stdout.write(`generating: ${region}...\n`);
             const quests = await gen(region, dateStr, tomorrow);
             const batch = db.batch();
             quests.forEach(q => batch.set(db.collection('quests').doc(q.id), q));
             await batch.commit();
             process.stdout.write(`  ok: ${quests.length} quests for ${region}\n`);
-            // Rate limit buffer between regions to stay under RPM_LIMIT
-            if (region !== REGIONS_LIST.at(-1)) {
-                await sleep(DELAY_BETWEEN_REGIONS_MS);
-            }
-        } catch (e) {
-            errors.push(region);
-            process.stderr.write(`[FAIL] ${region}: ${e.message}\n`);
-        }
-    }
+        })
+    );
+
+    const errors = results
+        .map((r, i) => r.status === 'rejected' ? { region: REGIONS_LIST[i], reason: r.reason?.message } : null)
+        .filter(Boolean);
+
+    errors.forEach(e => process.stderr.write(`[FAIL] ${e.region}: ${e.reason}\n`));
 
     if (errors.length) {
-        process.stderr.write(`failed regions (${errors.length}/${REGIONS_LIST.length}): ${errors.join(', ')}\n`);
+        process.stderr.write(`failed regions (${errors.length}/${REGIONS_LIST.length}): ${errors.map(e => e.region).join(', ')}\n`);
         process.exit(1);
     }
 
