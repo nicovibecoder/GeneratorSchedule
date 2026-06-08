@@ -161,9 +161,23 @@ async function genAll(dateStr, expiresAt) {
     let regionMap;
     try {
         const parsed = JSON.parse(text);
-        regionMap = parsed?.regions ?? parsed;
-    } catch {
-        throw new Error(`parse failed, response: ${text.slice(0, 300)}`);
+        // Handle { regions: {...} } or direct { "Hà Nội": [...] }
+        if (parsed?.regions && typeof parsed.regions === 'object') {
+            regionMap = parsed.regions;
+        } else if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+            // Check if keys look like region names (values are arrays)
+            const isRegionMap = Object.values(parsed).every(v => Array.isArray(v));
+            if (isRegionMap) {
+                regionMap = parsed;
+            } else {
+                throw new Error(`unrecognized structure, keys: ${Object.keys(parsed).slice(0,5).join(', ')}`);
+            }
+        } else {
+            throw new Error(`expected object, got: ${typeof parsed}`);
+        }
+    } catch (e) {
+        if (e.message.startsWith('unrecognized') || e.message.startsWith('expected')) throw e;
+        throw new Error(`parse failed, response: ${text.slice(0, 200)}`);
     }
 
     if (!regionMap || typeof regionMap !== 'object') {
