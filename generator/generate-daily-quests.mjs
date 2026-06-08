@@ -11,7 +11,6 @@ const {
     GEMINI_MODEL,
     QUESTS_PER_REGION = '5',
 } = process.env;
-const RPM_LIMIT = 200; // OpenRouter concurrent request limit reference
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
@@ -54,8 +53,9 @@ async function callOpenRouter(prompt) {
         throw new Error(`unexpected response: ${JSON.stringify(data).slice(0, 300)}`);
     }
     const content = data.choices[0].message.content;
-    process.stdout.write(`  [debug] raw response length: ${content.length}, preview: ${content.slice(0, 100)}\n`);
-    return content;
+    const actualModel = data.model ?? GEMINI_MODEL;
+    process.stdout.write(`  [debug] model: ${actualModel}, response length: ${content.length}, preview: ${content.slice(0, 100)}\n`);
+    return { content, actualModel };
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -105,7 +105,7 @@ async function gen(region, dateStr, expiresAt) {
         .replace(/\{\{date\}\}/g, dateStr)
         .replace(/\{\{count\}\}/g, String(COUNT));
 
-    const text = await genWithRetry(prompt);
+    const { content: text, actualModel } = await genWithRetry(prompt);
 
     let arr;
     try {
@@ -135,7 +135,7 @@ async function gen(region, dateStr, expiresAt) {
         region,
         expiresAt: Timestamp.fromDate(expiresAt),
         createdAt: Timestamp.now(),
-        generatedBy: 'ai',
+        generatedBy: actualModel,
         isSeasonalEvent: Boolean(q.isSeasonalEvent),
         eventName: q.eventName ?? null,
         eventBadge: q.eventBadge ?? null,
