@@ -53,7 +53,9 @@ async function callOpenRouter(prompt) {
     if (!data.choices?.[0]?.message?.content) {
         throw new Error(`unexpected response: ${JSON.stringify(data).slice(0, 300)}`);
     }
-    return data.choices[0].message.content;
+    const content = data.choices[0].message.content;
+    process.stdout.write(`  [debug] raw response length: ${content.length}, preview: ${content.slice(0, 100)}\n`);
+    return content;
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
