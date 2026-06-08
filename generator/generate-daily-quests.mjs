@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
@@ -9,10 +8,10 @@ if (missing.length) { process.stderr.write(`missing env: ${missing.join(',')}\n`
 const {
     GEMINI_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY, REGIONS, QUEST_PROMPT_TEMPLATE,
-    GEMINI_MODEL = 'gemini-3.1-flash-lite',
+    GEMINI_MODEL = 'openrouter/auto',
     QUESTS_PER_REGION = '5',
 } = process.env;
-const RPM_LIMIT = 15;     
+const RPM_LIMIT = 60; // OpenRouter is much more generous than Gemini free tier
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
@@ -30,15 +29,34 @@ initializeApp({
 });
 const db = getFirestore();
 
-const model = new GoogleGenerativeAI(GEMINI_API_KEY).getGenerativeModel({
-    model: GEMINI_MODEL,
-    generationConfig: { responseMimeType: 'application/json' },
-});
+// Call OpenRouter with Gemini model (OpenAI-compatible API, no extra SDK needed)
+async function callOpenRouter(prompt) {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${GEMINI_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            model: GEMINI_MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            response_format: { type: 'json_object' },
+        }),
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        const err = new Error(`[${res.status}] ${body}`);
+        err.status = res.status;
+        throw err;
+    }
+    const data = await res.json();
+    return data.choices[0].message.content;
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// --- Rate limit constants (Gemini free tier: 15 RPM, 1M TPM) ---
-// 1 request per region → 60000ms / 15 RPM = 4000ms minimum between requests
+// --- Rate limit constants (OpenRouter free tier: ~60 RPM) ---
+// 1 request per region → 60000ms / 60 RPM = 1000ms minimum between requests
 // Add buffer to stay safely under limit
                                    // requests per minute (free tier)
 const DELAY_BETWEEN_REGIONS_MS = Math.ceil(60000 / RPM_LIMIT) + 2000; // ~6000ms per region
@@ -64,8 +82,8 @@ const MAX_RETRIES = 5;
 async function genWithRetry(prompt) {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const result = await model.generateContent(prompt);
-            return result.response.text();
+            const result = await callOpenRouter(prompt);
+            return result;
         } catch (e) {
             const is429 = e.message?.includes('429') || e.status === 429;
             if (!is429 || attempt === MAX_RETRIES) throw e;
