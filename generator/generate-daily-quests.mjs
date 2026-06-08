@@ -35,14 +35,47 @@ const model = new GoogleGenerativeAI(GEMINI_API_KEY).getGenerativeModel({
     generationConfig: { responseMimeType: 'application/json' },
 });
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Parse retryDelay from Gemini 429 error message.
+ * Error text contains e.g. "retryDelay":"31.5s" or "retryDelay":"49s"
+ * Returns milliseconds, default 60000 if not found.
+ */
+function parseRetryDelay(errMsg) {
+    const m = errMsg.match(/"retryDelay"\s*:\s*"([\d.]+)s"/);
+    if (m) return Math.ceil(parseFloat(m[1]) * 1000) + 2000; // +2s buffer
+    return 60000;
+}
+
+/**
+ * Call Gemini with exponential backoff on 429.
+ * MAX_RETRIES attempts, respecting the retryDelay from the API response.
+ */
+const MAX_RETRIES = 5;
+async function genWithRetry(prompt) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const result = await model.generateContent(prompt);
+            return result.response.text();
+        } catch (e) {
+            const is429 = e.message?.includes('429') || e.status === 429;
+            if (!is429 || attempt === MAX_RETRIES) throw e;
+
+            const delayMs = parseRetryDelay(e.message ?? '');
+            process.stdout.write(`  [rate-limit] attempt ${attempt}/${MAX_RETRIES}, waiting ${(delayMs/1000).toFixed(1)}s...\n`);
+            await sleep(delayMs);
+        }
+    }
+}
+
 async function gen(region, dateStr, expiresAt) {
     const prompt = QUEST_PROMPT_TEMPLATE
         .replace(/\{\{region\}\}/g, region)
         .replace(/\{\{date\}\}/g, dateStr)
         .replace(/\{\{count\}\}/g, String(COUNT));
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const text = await genWithRetry(prompt);
 
     let arr;
     try {
@@ -106,9 +139,9 @@ async function main() {
             quests.forEach(q => batch.set(db.collection('quests').doc(q.id), q));
             await batch.commit();
             process.stdout.write(`  ok: ${quests.length} quests for ${region}\n`);
-            // Rate limit buffer between regions
+            // Rate limit buffer between regions — 5s to stay well under RPM limit
             if (region !== REGIONS_LIST.at(-1)) {
-                await new Promise(r => setTimeout(r, 2000));
+                await sleep(5000);
             }
         } catch (e) {
             errors.push(region);
