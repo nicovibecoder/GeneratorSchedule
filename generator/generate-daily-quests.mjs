@@ -9,10 +9,10 @@ if (missing.length) { process.stderr.write(`missing env: ${missing.join(',')}\n`
 const {
     GEMINI_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY, REGIONS, QUEST_PROMPT_TEMPLATE,
-    GEMINI_MODEL = 'gemini-2.0-flash',
+    GEMINI_MODEL = 'gemini-3.1-flash-lite',
     QUESTS_PER_REGION = '5',
 } = process.env;
-
+const RPM_LIMIT = 15;     
 const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
@@ -36,6 +36,14 @@ const model = new GoogleGenerativeAI(GEMINI_API_KEY).getGenerativeModel({
 });
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// --- Rate limit constants (Gemini free tier: 15 RPM, 1M TPM) ---
+// 1 request per region → 60000ms / 15 RPM = 4000ms minimum between requests
+// Add buffer to stay safely under limit
+                                   // requests per minute (free tier)
+const DELAY_BETWEEN_REGIONS_MS = Math.ceil(60000 / RPM_LIMIT) + 2000; // ~6000ms per region
+const MAX_RETRY_WAIT_MS = 90000;                             // cap retry wait at 90s
+// --------------------------------------------------------------
 
 /**
  * Parse retryDelay from Gemini 429 error message.
@@ -62,7 +70,7 @@ async function genWithRetry(prompt) {
             const is429 = e.message?.includes('429') || e.status === 429;
             if (!is429 || attempt === MAX_RETRIES) throw e;
 
-            const delayMs = parseRetryDelay(e.message ?? '');
+            const delayMs = Math.min(parseRetryDelay(e.message ?? ''), MAX_RETRY_WAIT_MS);
             process.stdout.write(`  [rate-limit] attempt ${attempt}/${MAX_RETRIES}, waiting ${(delayMs/1000).toFixed(1)}s...\n`);
             await sleep(delayMs);
         }
@@ -139,9 +147,9 @@ async function main() {
             quests.forEach(q => batch.set(db.collection('quests').doc(q.id), q));
             await batch.commit();
             process.stdout.write(`  ok: ${quests.length} quests for ${region}\n`);
-            // Rate limit buffer between regions — 5s to stay well under RPM limit
+            // Rate limit buffer between regions to stay under RPM_LIMIT
             if (region !== REGIONS_LIST.at(-1)) {
-                await sleep(5000);
+                await sleep(DELAY_BETWEEN_REGIONS_MS);
             }
         } catch (e) {
             errors.push(region);
