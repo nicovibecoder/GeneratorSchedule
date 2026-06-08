@@ -89,9 +89,12 @@ async function genWithRetry(prompt) {
             return result;
         } catch (e) {
             const is429 = e.message?.includes('429') || e.status === 429;
-            if (!is429 || attempt === MAX_RETRIES) throw e;
+            const is502 = e.message?.includes('502') || e.status === 502;
+            if ((!is429 && !is502) || attempt === MAX_RETRIES) throw e;
 
-            const delayMs = Math.min(parseRetryDelay(e.message ?? ''), MAX_RETRY_WAIT_MS);
+            const delayMs = is429
+                ? Math.min(parseRetryDelay(e.message ?? ''), MAX_RETRY_WAIT_MS)
+                : 5000 * attempt; // 502: 5s, 10s, 15s...
             process.stdout.write(`  [rate-limit] attempt ${attempt}/${MAX_RETRIES}, waiting ${(delayMs/1000).toFixed(1)}s...\n`);
             await sleep(delayMs);
         }
