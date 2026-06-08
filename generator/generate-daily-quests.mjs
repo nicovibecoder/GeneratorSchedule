@@ -8,7 +8,7 @@ if (missing.length) { process.stderr.write(`missing env: ${missing.join(',')}\n`
 const {
     GEMINI_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY, REGIONS, QUEST_PROMPT_TEMPLATE,
-    GEMINI_MODEL = 'openrouter/auto',
+    GEMINI_MODEL = 'google/gemini-2.0-flash-lite:free',
     QUESTS_PER_REGION = '5',
 } = process.env;
 const RPM_LIMIT = 60; // OpenRouter is much more generous than Gemini free tier
