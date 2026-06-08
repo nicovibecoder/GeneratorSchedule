@@ -2,3 +2,4 @@ node_modules/
 .env
 *.log
 quest-prompt.txt
+listmodel.txt

@@ -143,12 +143,14 @@ async function genWithRetry(prompt) {
                 const result = await callOpenRouter(prompt, model);
                 return result;
             } catch (e) {
-                const is429 = e.message?.includes('429') || e.status === 429;
-                const is502 = e.message?.includes('502') || e.status === 502;
-                if (!is429 && !is502) throw e; // non-retryable error
+                const is429 = e.status === 429 || /\[429\]/.test(e.message);
+                const is502 = e.status === 502 || /\[502\]/.test(e.message);
+                const is400 = e.status === 400 || /\[400\]/.test(e.message);
+                const is404 = e.status === 404 || /\[404\]/.test(e.message);
+                if (!is429 && !is502 && !is400 && !is404) throw e; // non-retryable error
 
-                if (is429 && attempt === MAX_RETRIES) {
-                    // Exhausted retries for this model → try next fallback
+                if (is400 || is404 || (is429 && attempt === MAX_RETRIES)) {
+                    // Invalid/not found model (400/404) or exhausted retries (429) → try next fallback
                     process.stdout.write(`  [fallback] ${model} exhausted, trying next model...\n`);
                     break;
                 }
