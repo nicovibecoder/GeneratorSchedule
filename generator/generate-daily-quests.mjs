@@ -15,8 +15,12 @@ const REGIONS_LIST = REGIONS.split(',').map(r => r.trim()).filter(Boolean);
 const COUNT = parseInt(QUESTS_PER_REGION, 10);
 const BASE_POINTS = { common:100, uncommon:200, rare:400, epic:700, legendary:1200 };
 
+// Fallback model chain from GEMINI_MODELS env — comma-separated, tried in order
+const MODEL_FALLBACKS = GEMINI_MODELS.split(',').map(m => m.trim()).filter(Boolean);
+
 // Log startup info (not secrets)
-process.stdout.write(`regions: ${REGIONS_LIST.length}, count/region: ${COUNT}, model: ${GEMINI_MODEL}\n`);
+process.stdout.write(`regions: ${REGIONS_LIST.length}, count/region: ${COUNT}\n`);
+process.stdout.write(`models: ${MODEL_FALLBACKS.join(' → ')}\n`);
 process.stdout.write(`template length: ${QUEST_PROMPT_TEMPLATE.length} chars\n`);
 
 initializeApp({
@@ -27,15 +31,6 @@ initializeApp({
     }),
 });
 const db = getFirestore();
-
-// Fallback model chain — tried in order if primary model is rate-limited
-const MODEL_FALLBACKS = [
-    GEMINI_MODEL,
-    'google/gemini-2.0-flash-lite:free',
-    'google/gemma-3-27b-it:free',
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'qwen/qwen-2.5-72b-instruct:free',
-].filter((m, i, arr) => m && arr.indexOf(m) === i); // dedupe, remove empty
 
 // Call OpenRouter — single request for ALL regions at once
 async function callOpenRouter(prompt, model = MODEL_FALLBACKS[0]) {

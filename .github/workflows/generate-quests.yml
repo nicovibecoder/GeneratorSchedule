@@ -28,6 +28,6 @@ jobs:
           FIREBASE_PRIVATE_KEY:    ${{ secrets.FIREBASE_PRIVATE_KEY }}
           REGIONS:                 ${{ secrets.REGIONS }}
           QUEST_PROMPT_TEMPLATE:   ${{ secrets.QUEST_PROMPT_TEMPLATE }}
-          GEMINI_MODEL:            ${{ secrets.GEMINI_MODEL }}
+          GEMINI_MODELS:           ${{ secrets.GEMINI_MODELS }}
           QUESTS_PER_REGION:       ${{ secrets.QUESTS_PER_REGION }}
         run: node generator/generate-daily-quests.mjs
