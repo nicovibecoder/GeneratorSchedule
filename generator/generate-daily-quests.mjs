@@ -50,6 +50,9 @@ async function callOpenRouter(prompt) {
         throw err;
     }
     const data = await res.json();
+    if (!data.choices?.[0]?.message?.content) {
+        throw new Error(`unexpected response: ${JSON.stringify(data).slice(0, 300)}`);
+    }
     return data.choices[0].message.content;
 }
 
