@@ -86,7 +86,15 @@ async function callOpenRouter(prompt) {
         err.status = res.status;
         throw err;
     }
-    const data = await res.json();
+    const rawText = await res.text();
+    if (!rawText) throw new Error(`empty response body (status ${res.status})`);
+
+    let data;
+    try {
+        data = JSON.parse(rawText);
+    } catch (e) {
+        throw new Error(`response not valid JSON (${rawText.length} chars): ${rawText.slice(0, 200)}`);
+    }
     if (!data.choices?.[0]?.message?.content) {
         throw new Error(`unexpected response: ${JSON.stringify(data).slice(0, 300)}`);
     }
