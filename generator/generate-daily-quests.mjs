@@ -253,14 +253,16 @@ async function cleanup() {
 
 async function main() {
     const dateStr = new Date().toISOString().split('T')[0];
-    const tomorrow = new Date();
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    tomorrow.setUTCHours(0, 0, 0, 0);
+
+    // Quest expiry: 7 days from now (at midnight UTC to keep a clean boundary)
+    const expiresAt = new Date();
+    expiresAt.setUTCDate(expiresAt.getUTCDate() + 7);
+    expiresAt.setUTCHours(0, 0, 0, 0);
 
     await cleanup();
 
     process.stdout.write(`generating all ${REGIONS_LIST.length} regions in 1 request...\n`);
-    const allQuests = await genAll(dateStr, tomorrow);
+    const allQuests = await genAll(dateStr, expiresAt);
 
     if (!allQuests.length) {
         process.stderr.write('fatal: no quests generated\n');

@@ -2,7 +2,7 @@ name: Generate Daily Quests
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 22:00 UTC = 05:00 AM Vietnam time
+    - cron: '0 15 * * *'
   workflow_dispatch:        # Allow manual trigger from Actions tab
 
 jobs:
