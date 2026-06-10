@@ -2,7 +2,7 @@ name: Generate Daily Quests
 
 on:
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 23 * * *'
       timezone: 'Asia/Ho_Chi_Minh'
   workflow_dispatch:        # Allow manual trigger from Actions tab
 
